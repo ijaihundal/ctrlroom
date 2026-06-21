@@ -1,0 +1,67 @@
+run:
+  timeout: 5m
+  go: "1.22"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - gocritic
+    - revive
+    - misspell
+    - gofmt
+    - goimports
+    - gocyclo
+    - lll
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+    - nilerr
+    - ineffassign
+    - dupl
+    - unconvert
+    - prealloc
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  lll:
+    line-length: 120
+  goimports:
+    local-prefixes: github.com/ijaihundal/ctrlroom
+  errcheck:
+    check-type-assertions: true
+  revive:
+    severity: warning
+    rules:
+      - name: exported
+        disabled: true
+      - name: package-comments
+        disabled: true
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+    disabled-checks:
+      - hugeParam
+      - exitAfterDefer
+  dupl:
+    threshold: 120
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - dupl
+        - lll
+        - gosec
+        - errcheck
+    - path: migrations/
+      linters:
+        - all
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  fix: false
