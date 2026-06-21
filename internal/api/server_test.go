@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ijaihundal/ctrlroom/internal/agent"
 	"github.com/ijaihundal/ctrlroom/internal/auth"
 	"github.com/ijaihundal/ctrlroom/internal/config"
 	"github.com/ijaihundal/ctrlroom/internal/db"
@@ -24,6 +25,7 @@ type testServer struct {
 	gitClient    *git.Client
 	worktreeDir  string
 	workspaceMgr *workspace.Manager
+	agentMgr     *agent.Manager
 }
 
 func setup(t *testing.T) *testServer {
@@ -62,7 +64,14 @@ func setup(t *testing.T) *testServer {
 	worktreeDir := t.TempDir()
 	workspaceMgr := workspace.NewManager(database, gitClient, worktreeDir, slog.Default())
 
-	srv := New(cfg, database, slog.Default(), gitClient, workspaceMgr)
+	// Tests use a fake adapter by default; override testServer.agentFactory
+	// to inject custom scripts.
+	factory := func(types.AgentType) (agent.AgentAdapter, error) {
+		return agent.NewFakeAdapter(), nil
+	}
+	agentMgr := agent.NewManager(database, factory, slog.Default())
+
+	srv := New(cfg, database, slog.Default(), gitClient, workspaceMgr, agentMgr)
 	httpSrv := httptest.NewServer(srv.Handler())
 	t.Cleanup(httpSrv.Close)
 
@@ -74,5 +83,6 @@ func setup(t *testing.T) *testServer {
 		gitClient:    gitClient,
 		worktreeDir:  worktreeDir,
 		workspaceMgr: workspaceMgr,
+		agentMgr:     agentMgr,
 	}
 }

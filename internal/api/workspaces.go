@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ijaihundal/ctrlroom/internal/agent"
 	"github.com/ijaihundal/ctrlroom/internal/db"
 	"github.com/ijaihundal/ctrlroom/internal/types"
 	"github.com/ijaihundal/ctrlroom/internal/workspace"
@@ -34,6 +35,9 @@ type workspaceResponse struct {
 	TargetRef    string              `json:"target_ref"`
 	PendingMerge *types.PendingMerge `json:"pending_merge"`
 	Orchestrator bool                `json:"orchestrator"`
+	TokensIn     int                 `json:"tokens_in"`
+	TokensOut    int                 `json:"tokens_out"`
+	CostUSD      float64             `json:"cost_usd"`
 	StartedAt    *string             `json:"started_at"`
 	CompletedAt  *string             `json:"completed_at"`
 	CreatedAt    string              `json:"created_at"`
@@ -82,6 +86,9 @@ func toWorkspaceResponse(ws *types.Workspace) workspaceResponse {
 		TargetRef:    ws.TargetRef,
 		PendingMerge: ws.PendingMerge,
 		Orchestrator: ws.Orchestrator,
+		TokensIn:     ws.TokensIn,
+		TokensOut:    ws.TokensOut,
+		CostUSD:      ws.CostUSD,
 		StartedAt:    ptrTimeRFC3339(ws.StartedAt),
 		CompletedAt:  ptrTimeRFC3339(ws.CompletedAt),
 		CreatedAt:    ws.CreatedAt.Format(time.RFC3339),
@@ -224,37 +231,74 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 	_ = writeJSON(w, http.StatusOK, diffResponse{Diff: out})
 }
 
-func (s *Server) handleStopWorkspace(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleStartWorkspace(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	if s.workspaceMgr == nil {
-		internalError(w, r, "Workspace manager not configured", nil)
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		badRequest(w, r, "invalid_body", "Request body could not be parsed: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		badRequest(w, r, "missing_prompt", "A non-empty prompt is required")
 		return
 	}
 
+	if _, err := s.agentMgr.Start(r.Context(), id, req.Prompt); err != nil {
+		switch {
+		case errors.Is(err, agent.ErrWorkspaceNotFound):
+			notFound(w, r, "Workspace not found")
+		case errors.Is(err, workspace.ErrInvalidTransition):
+			writeError(w, r, http.StatusConflict, "invalid_transition",
+				"Workspace cannot be started from its current state (must be idle)", nil)
+		default:
+			internalError(w, r, "Failed to start workspace", err)
+		}
+		return
+	}
+
+	ws, err := db.GetWorkspace(r.Context(), s.db, id)
+	if err != nil {
+		internalError(w, r, "Failed to reload workspace after start", err)
+		return
+	}
+	_ = writeJSON(w, http.StatusOK, toWorkspaceResponse(ws))
+}
+
+func (s *Server) handleStopWorkspace(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// Stop the agent if one is running (idempotent — no-op if no active session).
+	if err := s.agentMgr.Stop(r.Context(), id); err != nil && !errors.Is(err, agent.ErrWorkspaceNotActive) {
+		internalError(w, r, "Failed to stop agent", err)
+		return
+	}
+
+	// Then ensure the workspace itself is cancelled (handles workspaces with no agent).
 	ws, err := s.workspaceMgr.Cancel(r.Context(), id)
 	if err != nil {
 		switch {
 		case errors.Is(err, workspace.ErrWorkspaceNotFound), errors.Is(err, workspace.ErrProjectNotFound):
 			notFound(w, r, "Workspace not found")
 		case errors.Is(err, workspace.ErrInvalidTransition):
-			writeError(w, r, http.StatusConflict, "invalid_transition",
-				"Workspace cannot be cancelled from its current state", nil)
+			// Already terminal — that's fine, return current state.
+			ws, err = db.GetWorkspace(r.Context(), s.db, id)
+			if err != nil {
+				internalError(w, r, "Failed to reload workspace", err)
+				return
+			}
 		default:
 			internalError(w, r, "Failed to stop workspace", err)
+			return
 		}
-		return
 	}
 	_ = writeJSON(w, http.StatusOK, toWorkspaceResponse(ws))
 }
 
 func (s *Server) handleMergeWorkspace(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-
-	if s.workspaceMgr == nil {
-		internalError(w, r, "Workspace manager not configured", nil)
-		return
-	}
 
 	resp, err := s.workspaceMgr.Merge(r.Context(), id)
 	if err != nil {
@@ -296,8 +340,60 @@ func (s *Server) handleMergeWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
 	var req messageRequest
-	_ = decodeJSON(r, &req)
-	writeError(w, r, http.StatusNotImplemented, "not_implemented",
-		"Workspace messaging is implemented in Phase 3", nil)
+	if err := decodeJSON(r, &req); err != nil {
+		badRequest(w, r, "invalid_body", "Request body could not be parsed: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		badRequest(w, r, "missing_content", "A non-empty content is required")
+		return
+	}
+
+	if err := s.agentMgr.SendPrompt(r.Context(), id, req.Content); err != nil {
+		switch {
+		case errors.Is(err, agent.ErrWorkspaceNotActive):
+			writeError(w, r, http.StatusConflict, "no_active_agent",
+				"Workspace has no running agent; start it first", nil)
+		case errors.Is(err, workspace.ErrInvalidTransition):
+			writeError(w, r, http.StatusConflict, "invalid_transition",
+				"Workspace is not awaiting input; wait for the current turn to finish", nil)
+		default:
+			internalError(w, r, "Failed to send message", err)
+		}
+		return
+	}
+
+	ws, err := db.GetWorkspace(r.Context(), s.db, id)
+	if err != nil {
+		internalError(w, r, "Failed to reload workspace after message", err)
+		return
+	}
+	_ = writeJSON(w, http.StatusOK, toWorkspaceResponse(ws))
+}
+
+func (s *Server) handleCompleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	if err := s.agentMgr.Complete(r.Context(), id); err != nil {
+		switch {
+		case errors.Is(err, db.ErrNotFound):
+			notFound(w, r, "Workspace not found")
+		case errors.Is(err, workspace.ErrInvalidTransition):
+			writeError(w, r, http.StatusConflict, "invalid_transition",
+				"Workspace cannot be completed from its current state (must be awaiting_input)", nil)
+		default:
+			internalError(w, r, "Failed to complete workspace", err)
+		}
+		return
+	}
+
+	ws, err := db.GetWorkspace(r.Context(), s.db, id)
+	if err != nil {
+		internalError(w, r, "Failed to reload workspace after complete", err)
+		return
+	}
+	_ = writeJSON(w, http.StatusOK, toWorkspaceResponse(ws))
 }

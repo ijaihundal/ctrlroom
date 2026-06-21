@@ -199,26 +199,29 @@ func TestStopWorkspace_Success(t *testing.T) {
 	}
 }
 
-func TestStopWorkspace_InvalidTransition(t *testing.T) {
+func TestStopWorkspace_Idempotent(t *testing.T) {
+	// Stop is idempotent: a second call on a terminal workspace returns 200
+	// with the current (cancelled) state rather than 409.
 	ts, client, pid := setupWorkspaceTest(t)
 	ws := createWorkspaceViaAPI(t, ts, client, pid)
 
-	// Cancel once.
 	stop := doJSON(t, client, http.MethodPost, ts.server.URL+"/api/workspaces/"+ws.ID+"/stop", nil)
 	if stop.StatusCode != http.StatusOK {
 		t.Fatalf("first stop status = %d", stop.StatusCode)
 	}
 	stop.Body.Close()
 
-	// Cancel again — already cancelled (terminal state) → 409.
 	resp := doJSON(t, client, http.MethodPost, ts.server.URL+"/api/workspaces/"+ws.ID+"/stop", nil)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second stop status = %d, want 200", resp.StatusCode)
 	}
-	env := decodeEnvelope(t, resp.Body)
-	if env.Error.Code != "invalid_transition" {
-		t.Errorf("code = %q, want %q", env.Error.Code, "invalid_transition")
+	var ws2 workspaceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ws2); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if ws2.Status != "cancelled" {
+		t.Errorf("status = %q, want cancelled", ws2.Status)
 	}
 }
 
@@ -339,18 +342,19 @@ func TestMerge_Conflict(t *testing.T) {
 	}
 }
 
-func TestMessage_Phase2NotImplemented(t *testing.T) {
+func TestMessage_NoActiveAgent(t *testing.T) {
+	// /message on a freshly-prepared workspace (idle, no agent started) returns 409.
 	ts, client, pid := setupWorkspaceTest(t)
 	ws := createWorkspaceViaAPI(t, ts, client, pid)
 
 	resp := doJSON(t, client, http.MethodPost, ts.server.URL+"/api/workspaces/"+ws.ID+"/message",
 		map[string]any{"content": "hi"})
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusConflict)
 	}
 	env := decodeEnvelope(t, resp.Body)
-	if env.Error.Code != "not_implemented" {
-		t.Errorf("code = %q, want %q", env.Error.Code, "not_implemented")
+	if env.Error.Code != "no_active_agent" {
+		t.Errorf("code = %q, want %q", env.Error.Code, "no_active_agent")
 	}
 }

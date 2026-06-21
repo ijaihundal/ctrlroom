@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/ijaihundal/ctrlroom/internal/agent"
 	"github.com/ijaihundal/ctrlroom/internal/config"
 	"github.com/ijaihundal/ctrlroom/internal/git"
 	"github.com/ijaihundal/ctrlroom/internal/logging"
@@ -20,6 +21,7 @@ type Server struct {
 	logger       *slog.Logger
 	gitClient    *git.Client
 	workspaceMgr *workspace.Manager
+	agentMgr     *agent.Manager
 }
 
 func New(
@@ -28,6 +30,7 @@ func New(
 	logger *slog.Logger,
 	gitClient *git.Client,
 	workspaceMgr *workspace.Manager,
+	agentMgr *agent.Manager,
 ) *Server {
 	return &Server{
 		cfg:          cfg,
@@ -35,6 +38,7 @@ func New(
 		logger:       logger,
 		gitClient:    gitClient,
 		workspaceMgr: workspaceMgr,
+		agentMgr:     agentMgr,
 	}
 }
 
@@ -89,9 +93,13 @@ func (s *Server) Handler() http.Handler {
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", s.handleGetWorkspace)
 					r.Get("/diff", s.handleDiff)
+					r.Post("/start", s.handleStartWorkspace)
 					r.Post("/stop", s.handleStopWorkspace)
 					r.Post("/merge", s.handleMergeWorkspace)
 					r.Post("/message", s.handleMessage)
+					r.Post("/complete", s.handleCompleteWorkspace)
+					r.Get("/messages", s.handleListMessages)
+					r.Get("/stream", s.handleStreamWorkspace)
 				})
 			})
 		})

@@ -21,6 +21,10 @@ Picks up where `README.md` leaves off. README is the *what*; this is the *how*. 
 | D13 | Domain types | Pure `internal/types/` leaf package (structs + enums only) | Clean cross-package naming; imported by all layers, imports nothing internal |
 | D14 | Migrations | Incremental per phase (`001_auth.sql`, `002_kanban.sql`, …) | Smaller diffs, realistic if schema evolves; tx-per-file, forward-only |
 | D15 | Routing | `chi/v5` | Middleware composition, idiomatic, stable |
+| D16 | Phase 3+4 scope | **OpenCode-first**: build the agent contract + OpenCode adapter fully + live-verify with the locally-installed `opencode` binary. Claude and Codex adapters are deferred (factory returns `ErrAgentNotImplemented` for those agent types until later). | OpenCode binary is already installed in dev; Z_AI_API_KEY provider configured in `~/.config/opencode/opencode.json`. Avoids blocking on `ANTHROPIC_API_KEY` procurement or `codex` binary install. Once OpenCode end-to-end works, the contract is proven and other adapters plug in. |
+| D17 | Codex mode (when built) | `codex app-server` JSON-RPC over stdio | Persistent process for multi-turn; matches Claude's stream-json model. |
+| D18 | OpenCode server scope | One `opencode serve` per workspace | Simple isolation, no SSE filtering by sessionID needed. |
+| D19 | WebSocket library | `github.com/coder/websocket` | Stdlib-friendly, MIT, actively maintained, context-aware. |
 
 Open (defer until needed): container isolation, Prometheus metrics, multi-repo projects, GitHub PR target.
 

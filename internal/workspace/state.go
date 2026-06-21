@@ -6,10 +6,13 @@ import (
 	"github.com/ijaihundal/ctrlroom/internal/types"
 )
 
-// allowedTransitions is the Phase 2 subset of the workspace state machine.
+// allowedTransitions is the workspace state machine (Phase 2+3 combined).
 // Keys are the source status; values are the set of statuses reachable in one
 // step. Terminal states (merged, failed, cancelled, conflict_stuck) have no
 // outgoing entries and are enforced by IsTerminal.
+//
+// Phase 3 additions: idle→running, running→awaiting_input/cancelled/failed,
+// awaiting_input→running/completed/cancelled.
 var allowedTransitions = map[types.WorkspaceStatus]map[types.WorkspaceStatus]bool{
 	types.WorkspaceQueued: {
 		types.WorkspacePreparing: true,
@@ -24,6 +27,18 @@ var allowedTransitions = map[types.WorkspaceStatus]map[types.WorkspaceStatus]boo
 		types.WorkspaceCompleted: true,
 		types.WorkspaceCancelled: true,
 		types.WorkspacePreparing: true,
+		types.WorkspaceRunning:   true,
+	},
+	types.WorkspaceRunning: {
+		types.WorkspaceAwaitingInput:     true,
+		types.WorkspaceFailed:            true,
+		types.WorkspaceCancelled:         true,
+		types.WorkspaceResolvingConflict: true,
+	},
+	types.WorkspaceAwaitingInput: {
+		types.WorkspaceRunning:   true,
+		types.WorkspaceCompleted: true,
+		types.WorkspaceCancelled: true,
 	},
 	types.WorkspaceCompleted: {
 		types.WorkspaceMerged:            true,
@@ -40,7 +55,7 @@ var allowedTransitions = map[types.WorkspaceStatus]map[types.WorkspaceStatus]boo
 }
 
 // CanTransition reports whether transitioning from `from` to `to` is allowed
-// under the Phase 2 state machine.
+// under the workspace state machine.
 func CanTransition(from, to types.WorkspaceStatus) bool {
 	if from == to {
 		return false

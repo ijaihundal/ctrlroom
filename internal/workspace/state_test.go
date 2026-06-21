@@ -20,6 +20,14 @@ func TestCanTransition_Allowed(t *testing.T) {
 		{types.WorkspaceIdle, types.WorkspaceCompleted},
 		{types.WorkspaceIdle, types.WorkspaceCancelled},
 		{types.WorkspaceIdle, types.WorkspacePreparing},
+		{types.WorkspaceIdle, types.WorkspaceRunning},
+		{types.WorkspaceRunning, types.WorkspaceAwaitingInput},
+		{types.WorkspaceRunning, types.WorkspaceFailed},
+		{types.WorkspaceRunning, types.WorkspaceCancelled},
+		{types.WorkspaceRunning, types.WorkspaceResolvingConflict},
+		{types.WorkspaceAwaitingInput, types.WorkspaceRunning},
+		{types.WorkspaceAwaitingInput, types.WorkspaceCompleted},
+		{types.WorkspaceAwaitingInput, types.WorkspaceCancelled},
 		{types.WorkspaceCompleted, types.WorkspaceMerged},
 		{types.WorkspaceCompleted, types.WorkspaceCancelled},
 		{types.WorkspaceCompleted, types.WorkspaceResolvingConflict},
@@ -60,10 +68,11 @@ func TestCanTransition_Disallowed(t *testing.T) {
 		{types.WorkspaceQueued, types.WorkspaceCompleted},
 		{types.WorkspaceQueued, types.WorkspaceMerged},
 		{types.WorkspaceIdle, types.WorkspaceMerged},
-		// Phase 3 states (not yet supported in Phase 2).
-		{types.WorkspaceIdle, types.WorkspaceRunning},
+		// Phase 3 skipped states (allowed transitions are tested in Allowed).
 		{types.WorkspaceRunning, types.WorkspaceCompleted},
 		{types.WorkspacePreparing, types.WorkspaceRunning},
+		{types.WorkspaceAwaitingInput, types.WorkspaceFailed},
+		{types.WorkspaceRunning, types.WorkspaceMerged},
 		// Same-state is a no-op, not a transition.
 		{types.WorkspaceIdle, types.WorkspaceIdle},
 		{types.WorkspaceQueued, types.WorkspaceQueued},

@@ -12,12 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ijaihundal/ctrlroom/internal/agent"
 	"github.com/ijaihundal/ctrlroom/internal/api"
 	"github.com/ijaihundal/ctrlroom/internal/auth"
 	"github.com/ijaihundal/ctrlroom/internal/config"
 	"github.com/ijaihundal/ctrlroom/internal/db"
 	"github.com/ijaihundal/ctrlroom/internal/git"
 	"github.com/ijaihundal/ctrlroom/internal/logging"
+	"github.com/ijaihundal/ctrlroom/internal/types"
 	"github.com/ijaihundal/ctrlroom/internal/version"
 	"github.com/ijaihundal/ctrlroom/internal/workspace"
 )
@@ -71,13 +73,23 @@ func run() error {
 	}
 	workspaceMgr := workspace.NewManager(database, gitClient, cfg.WorktreeDir, logger)
 
-	server := api.New(cfg, database, logger, gitClient, workspaceMgr)
+	// Sweep orphaned workspaces from a previous server lifetime.
+	if _, err := agent.SweepOrphans(context.Background(), database, logger); err != nil {
+		return fmt.Errorf("sweep orphans: %w", err)
+	}
+
+	agentFactory := agent.NewAdapterFactory(agent.Binaries{
+		types.AgentOpenCode: "opencode",
+	})
+	agentMgr := agent.NewManager(database, agentFactory, logger)
+
+	server := api.New(cfg, database, logger, gitClient, workspaceMgr, agentMgr)
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           server.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		ReadTimeout:       0, // no limit — agents stream indefinitely
+		WriteTimeout:      0, // no limit — /start + /stream are long-lived
 		IdleTimeout:       120 * time.Second,
 	}
 
